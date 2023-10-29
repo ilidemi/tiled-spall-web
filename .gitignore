@@ -3,3 +3,12 @@ build/
 .vs/
 */.vs/
 .DS_Store
+pdbdump
+*.tiles*
+*.br
+*.gz
+*.exe
+*.pdb
+*.rdbg
+*.spall
+*.dump

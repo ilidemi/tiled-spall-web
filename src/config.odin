@@ -3,6 +3,7 @@ package main
 import "core:fmt"
 import "core:strings"
 import "core:mem"
+import "core:math"
 import "core:math/rand"
 import "core:strconv"
 import "core:container/queue"
@@ -53,32 +54,20 @@ gen_event_color :: proc(trace: ^Trace, _events: []Event, thread_max: i64, node: 
 
 	if len(events) == 1 {
 		ev := &events[0]
-		duration := bound_duration(ev, thread_max)
-		idx := name_color_idx(ev.name)
-		node.avg_color = trace.color_choices[idx]
+		node.avg_color = ev.color
 
 		// if the event was started with no end, *right* as the trace quit, we'll get a duration of 0
 		// make this 1 so it has *some* LOD contribution
-		node.weight = max(duration, 1)
+		node.weight = max(ev.weight, 1)
 		return
 	}
 
 	color := FVec3{}
-	color_weights := [COLOR_CHOICES]i64{}
 	for ev in &events {
-		idx := name_color_idx(ev.name)
-		duration := bound_duration(&ev, thread_max)
-
-		color_weights[idx] += duration
-		total_weight += duration
+		color += ev.color * f32(ev.weight)
+		total_weight += ev.weight
 	}
-
-	weights_sum : i64 = 0
-	for weight, idx in color_weights {
-		color += trace.color_choices[idx] * f32(weight)
-		weights_sum += weight
-	}
-	color /= f32(weights_sum)
+	color /= f32(total_weight)
 
 	node.avg_color = color
 	node.weight = total_weight
@@ -120,108 +109,119 @@ chunk_events :: proc(trace: ^Trace) {
 
 	// using an eytzinger LOD tree for each depth array
 	for proc_v, p_idx in &trace.processes {
-		for tm, t_idx in &proc_v.threads {
-			for depth, d_idx in &tm.depths {
-				leaf_count := i_round_up(len(depth.events), BUCKET_SIZE) / BUCKET_SIZE
-				depth.leaf_count = leaf_count
-
-				width := CHUNK_NARY_WIDTH - 1
-				internal_node_count := i_round_up((leaf_count - 1), width) / width
-				total_node_count := internal_node_count + leaf_count
-
-				tm.depths[d_idx].tree = make([]ChunkNode, total_node_count, big_global_allocator)
-				zero_slice(tm.depths[d_idx].tree)
-
-				lod_mem_usage += size_of(ChunkNode) * total_node_count
-				ev_mem_usage += size_of(Event) * len(depth.events)
-
-				tree := tm.depths[d_idx].tree
-				tree_start_idx := len(tree) - leaf_count
-
-				cur_node := 0
-				overhang_idx := 0
-				prehang_rank := 0
-				for ; cur_node < total_node_count; {
-					overhang_idx = cur_node
-					cur_node = (CHUNK_NARY_WIDTH * cur_node) + 1
-
-					prehang_rank += 1
-				}
-
-				posthang_rank := 1
-				tmp_idx := len(tree) - leaf_count
-				for ; tmp_idx > 0; {
-					tmp_idx = (tmp_idx - 1) / CHUNK_NARY_WIDTH
-					posthang_rank += 1
-				}
-
-				_tmp := 1
-				for _tmp < leaf_count {
-					_tmp = _tmp * CHUNK_NARY_WIDTH
-				}
-				depth.full_leaves = _tmp
-
-				overhang_len := len(tree) - overhang_idx
-				if prehang_rank == posthang_rank {
-					overhang_len = 0
-				}
-				depth.overhang_len = overhang_len
-
-				for i := 0; i < overhang_len; i += 1 {
-					start_idx := i * BUCKET_SIZE
-					end_idx := start_idx + min(len(depth.events) - start_idx, BUCKET_SIZE)
-					scan_arr := depth.events[start_idx:end_idx]
-
-					start_ev := &scan_arr[0]
-					end_ev := &scan_arr[len(scan_arr)-1]
-					tree_idx := overhang_idx + i
-
-					node := &tree[tree_idx]
-					node.start_time = start_ev.timestamp - trace.total_min_time
-					node.end_time   = end_ev.timestamp + bound_duration(end_ev, tm.max_time) - trace.total_min_time
-					gen_event_color(trace, scan_arr, tm.max_time, node)
-
-				}
-
-				previous_len := leaf_count - overhang_len
-				ev_offset := overhang_len * BUCKET_SIZE
-				for i := 0; i < previous_len; i += 1 {
-					start_idx := (i * BUCKET_SIZE) + ev_offset
-					end_idx := start_idx + min(len(depth.events) - start_idx, BUCKET_SIZE)
-					scan_arr := depth.events[start_idx:end_idx]
-
-					start_ev := &scan_arr[0]
-					end_ev := &scan_arr[len(scan_arr)-1]
-					tree_idx := tree_start_idx + i
-
-					node := &tree[tree_idx]
-					node.start_time = start_ev.timestamp - trace.total_min_time
-					node.end_time   = end_ev.timestamp + bound_duration(end_ev, tm.max_time) - trace.total_min_time
-					gen_event_color(trace, scan_arr, tm.max_time, node)
-				}
-
-				avg_color := FVec3{}
-				for i := tree_start_idx - 1; i >= 0; i -= 1 {
-					node := &tree[i]
-
-					start_idx := (CHUNK_NARY_WIDTH * i) + 1
-					end_idx := min(start_idx + (CHUNK_NARY_WIDTH - 1), len(tree) - 1)
-
-					node.start_time = tree[start_idx].start_time
-					node.end_time   = tree[end_idx].end_time
-
-					avg_color = {}
-					for j := start_idx; j <= end_idx; j += 1 {
-						avg_color += tree[j].avg_color * f32(tree[j].weight)
-						node.weight += tree[j].weight
-					}
-					node.avg_color = avg_color / f32(node.weight)
-				}
+		for _, t_idx in &proc_v.threads {
+			thread := &proc_v.threads[t_idx]
+			for _, d_idx in &thread.depths {
+				depth_lod_mem_usage, depth_ev_mem_usage := chunk_depth_events(trace, thread, &thread.depths[d_idx])
+				lod_mem_usage += depth_lod_mem_usage
+				ev_mem_usage += depth_ev_mem_usage
 			}
 		}
 	}
 
 	fmt.printf("LOD memory: %v MB | Event memory: %v MB\n", f64(lod_mem_usage) / 1024 / 1024, f64(ev_mem_usage) / 1024 / 1024)
+}
+
+chunk_depth_events :: proc(trace: ^Trace, thread: ^Thread, depth: ^Depth) -> (int, int) {
+	leaf_count := i_round_up(len(depth.events), BUCKET_SIZE) / BUCKET_SIZE
+	depth.leaf_count = leaf_count
+
+	width := CHUNK_NARY_WIDTH - 1
+	internal_node_count := i_round_up((leaf_count - 1), width) / width
+	total_node_count := internal_node_count + leaf_count
+
+	rounded_node_count := 1 << uint(math.ceil(math.log2(f64(total_node_count))))
+	reserve(&depth.tree, rounded_node_count)
+	resize(&depth.tree, total_node_count)
+	zero_slice(depth.tree[:])
+
+	lod_mem_usage := size_of(ChunkNode) * total_node_count
+	ev_mem_usage := size_of(Event) * len(depth.events)
+
+	tree := depth.tree
+	tree_start_idx := len(tree) - leaf_count
+
+	cur_node := 0
+	overhang_idx := 0
+	prehang_rank := 0
+	for ; cur_node < total_node_count; {
+		overhang_idx = cur_node
+		cur_node = (CHUNK_NARY_WIDTH * cur_node) + 1
+
+		prehang_rank += 1
+	}
+
+	posthang_rank := 1
+	tmp_idx := len(tree) - leaf_count
+	for ; tmp_idx > 0; {
+		tmp_idx = (tmp_idx - 1) / CHUNK_NARY_WIDTH
+		posthang_rank += 1
+	}
+
+	_tmp := 1
+	for _tmp < leaf_count {
+		_tmp = _tmp * CHUNK_NARY_WIDTH
+	}
+	depth.full_leaves = _tmp
+
+	overhang_len := len(tree) - overhang_idx
+	if prehang_rank == posthang_rank {
+		overhang_len = 0
+	}
+	depth.overhang_len = overhang_len
+
+	for i := 0; i < overhang_len; i += 1 {
+		start_idx := i * BUCKET_SIZE
+		end_idx := start_idx + min(len(depth.events) - start_idx, BUCKET_SIZE)
+		scan_arr := depth.events[start_idx:end_idx]
+
+		start_ev := &scan_arr[0]
+		end_ev := &scan_arr[len(scan_arr)-1]
+		tree_idx := overhang_idx + i
+
+		node := &tree[tree_idx]
+		node.start_time = start_ev.timestamp - trace.total_min_time
+		node.end_time   = end_ev.timestamp + bound_duration(end_ev, thread.max_time) - trace.total_min_time
+		gen_event_color(trace, scan_arr, thread.max_time, node)
+
+	}
+
+	previous_len := leaf_count - overhang_len
+	ev_offset := overhang_len * BUCKET_SIZE
+	for i := 0; i < previous_len; i += 1 {
+		start_idx := (i * BUCKET_SIZE) + ev_offset
+		end_idx := start_idx + min(len(depth.events) - start_idx, BUCKET_SIZE)
+		scan_arr := depth.events[start_idx:end_idx]
+
+		start_ev := &scan_arr[0]
+		end_ev := &scan_arr[len(scan_arr)-1]
+		tree_idx := tree_start_idx + i
+
+		node := &tree[tree_idx]
+		node.start_time = start_ev.timestamp - trace.total_min_time
+		node.end_time   = end_ev.timestamp + bound_duration(end_ev, thread.max_time) - trace.total_min_time
+		gen_event_color(trace, scan_arr, thread.max_time, node)
+	}
+
+	avg_color := FVec3{}
+	for i := tree_start_idx - 1; i >= 0; i -= 1 {
+		node := &tree[i]
+
+		start_idx := (CHUNK_NARY_WIDTH * i) + 1
+		end_idx := min(start_idx + (CHUNK_NARY_WIDTH - 1), len(tree) - 1)
+
+		node.start_time = tree[start_idx].start_time
+		node.end_time   = tree[end_idx].end_time
+
+		avg_color = {}
+		for j := start_idx; j <= end_idx; j += 1 {
+			avg_color += tree[j].avg_color * f32(tree[j].weight)
+			node.weight += tree[j].weight
+		}
+		node.avg_color = avg_color / f32(node.weight)
+	}
+
+	return lod_mem_usage, ev_mem_usage
 }
 
 get_left_child :: #force_inline proc(idx: int) -> int {
@@ -383,7 +383,7 @@ init_loading_state :: proc(trace: ^Trace, size: u32, name: string) {
 	start_bench("parse config")
 }
 
-is_json := false
+trace_format: TraceFormat
 finish_loading :: proc (trace: ^Trace) {
 	stop_bench("parse config")
 	fmt.printf("Got %d events, %d instants\n", trace.event_count, trace.instant_count)
@@ -393,10 +393,13 @@ finish_loading :: proc (trace: ^Trace) {
 	free_all(scratch2_allocator)
 
 	start_bench("process and sort events")
-	if is_json {
-		json_process_events(trace)
-	} else {
-		ms_v1_bin_process_events(trace)
+	switch trace_format {
+		case .Json:
+			json_process_events(trace)
+		case .ManualStreamV1:
+			ms_v1_bin_process_events(trace)
+		case .TilemapV1:
+			// no-op
 	}
 	stop_bench("process and sort events")
 
@@ -410,7 +413,7 @@ finish_loading :: proc (trace: ^Trace) {
 	stop_bench("generate spatial partitions")
 
 	start_bench("generate self-time")
-	if is_json {
+	if trace_format == .Json {
 		json_generate_selftimes(trace)
 	}
 	stop_bench("generate self-time")
@@ -445,7 +448,6 @@ load_config_chunk :: proc "contextless" (chunk: []u8) {
 		}
 		magic := (^u64)(raw_data(chunk))^
 
-		is_json = false
 		if magic == spall.MANUAL_MAGIC {
 			hdr := cast(^spall.Header)raw_data(chunk)
 			if hdr.version != 1 {
@@ -453,14 +455,25 @@ load_config_chunk :: proc "contextless" (chunk: []u8) {
 				push_fatal(SpallError.InvalidFileVersion)
 			}
 
+			trace_format = .ManualStreamV1
 			_trace.stamp_scale = hdr.timestamp_unit
 			_trace.stamp_scale *= 1000
 			_trace.parser.pos += i64(header_sz)
 		} else if magic == spall.NATIVE_MAGIC {
 			fmt.printf("You're trying to use a native-version file on the web!\n")
 			push_fatal(SpallError.NativeFileDetected)
+		} else if magic == spall.TILEMAP_MAGIC {
+			hdr := cast(^spall.Header)raw_data(chunk)
+			if hdr.version != 1 {
+				fmt.printf("Your tilemap version (%d) is not supported!\n", hdr.version)
+				push_fatal(SpallError.InvalidTilemapVersion)
+			}
+
+			trace_format = .TilemapV1
+			_trace.stamp_scale = hdr.timestamp_unit
+			_trace.parser.pos += i64(header_sz)
 		} else {
-			is_json = true
+			trace_format = .Json
 			_trace.stamp_scale = 1
 			_trace.json_parser = init_json_parser()
 		}
@@ -468,10 +481,13 @@ load_config_chunk :: proc "contextless" (chunk: []u8) {
 		first_chunk = false
 	}
 
-	if is_json {
-		load_json_chunk(&_trace, chunk)
-	} else {
-		ms_v1_load_binary_chunk(&_trace, chunk)
+	switch trace_format {
+		case .Json:
+			load_json_chunk(&_trace, chunk)
+		case .ManualStreamV1:
+			ms_v1_load_binary_chunk(&_trace, chunk)
+		case .TilemapV1:
+			tilemap_v1_load(&_trace, chunk)
 	}
 
 	return
@@ -534,5 +550,7 @@ setup_tid :: proc(trace: ^Trace, p_idx: i32, thread_id: u32) -> i32 {
 	return t_idx
 }
 
-default_config_name :: "../demos/cuik_c_compiler.json"
-default_config := string(#load(default_config_name))
+default_config_name :: "GraphViz dot layout"
+default_config_path :: "../build/dist/graphviz/spalltilemap"
+default_config_url :: "https://tiled-spall-graphviz.s3.us-west-2.amazonaws.com"
+default_config := string(#load(default_config_path))

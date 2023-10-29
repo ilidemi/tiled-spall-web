@@ -378,6 +378,26 @@ async function init() {
 
 				open_file_dialog() {
 					document.getElementById('file-dialog').click();
+				},
+
+				// Tile fetching
+				fetch_tile(base_url_p, base_url_len, pid, tid, depth, zoom, time) {
+					let base_url = window.wasm.odinMem.loadString(base_url_p, base_url_len);
+					let url = `${base_url}/${pid}/${tid}/${depth}/${zoom}/${time}.spalltile.br`;
+					fetch(url)
+						.then(response => {
+							if (response.status === 200) {
+								response.arrayBuffer()
+									.then(data => window.wasm.tilemap_insert(pid, tid, depth, zoom, time, ...bytes(data)))
+									.catch(error => console.error("Tile body fetch error:", error));
+							} else if (response.status === 404) {
+								window.wasm.tilemap_insert(pid, tid, depth, zoom, time, ...bytes(new ArrayBuffer()));
+								wakeUp();
+							} else {
+								console.error("Bad tile response:", response);
+							}
+						})
+						.catch(error => console.error("Tile fetch error:", error));
 				}
 			},
 		});

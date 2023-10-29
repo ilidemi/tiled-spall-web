@@ -21,7 +21,10 @@ for arg in sys.argv:
 odin = 'odin'
 program_name = 'spall'
 
-[os.remove(f) for f in glob.iglob('build/dist/*', recursive=True)]
+os.remove("build/dist/spall.html")
+os.remove("build/dist/spall.js")
+os.remove("build/dist/spall.wasm")
+os.remove("build/dist/wasm_runtime.js")
 for ext in ['*.o', '*.wasm', '*.wat']:
     [os.remove(f) for f in glob.iglob('build/**/' + ext, recursive=True)]
 

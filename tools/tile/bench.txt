@@ -1,0 +1,66 @@
+										Uncompressed	Compressed		Compression ratio	Size	Files		Compression time
+cuik names in tiles						4845639			445143			9.2%				100%
+cuik interning							1949027			313465			16.1%				70%
+cuik progressive detail					275203			51748			18.8%				12%
+cuik fixed output (gz9)					704302			221093			31.5%
+cuik fixed output (br)					704032			193916			27.5%
+cuik with counts (br)					980174			280623			28.6%
+
+
+profile_small orig						1792424
+profile_small (br)						16579173		3515924			21.2%				196%
+
+
+profile_big orig						4347781120
+profile_big 2 1K (br, est)				46055641088		10605784033		23.0%				243%	4220030
+profile_big 8 4K (br, est)				19188043776		3628408984		18.9%				83%
+profile_big 8 4K soa_dsese (br, est)	19188043776		3029918777		15.8%				70%
+profile_big 8 4K soa_dsese (br)			19188043776		3940605952		20.5%				91%		2693537
+profile_big 8 4K soa_dsese 256K-1M (br)	15130140672		1877176320		12.4%				43%		73136
+profile_big 8 4K soa_dsese 1M-4M (br)	11877122048		1301106688		11.0%				30%		17400		39m52s
+profile_big 2 1K soa_dsese 1M-4M (br)	30960390144		3758493696		12.1%				86%		17354
+profile_big 2 4K soa_dsese 1M-4M		31044067328													18250
+profile_big 4 4K soa_dsese 1M-4M		16141066240													14608
+profile_big 8 4K soa_dsese 1M-4M (gz9)	11877122048		1671229440		14.1%				38%		17400		8m21s
+profile_big 8 4K soa_dsese 1M-4M (br1)	11877122048		2177265664		18.3%				50%		17400		1m54s
+profile_big 8 4K soa_dsese 1M-4M (br5)	11877122048		1579364352		13.3%				36%		17400		2m08s
+profile_big 8 4K soa_dsese 1M-4M (br8)	11877122048		1542184960		13.0%				35%		17400		2m27s
+profile_big 8 4K soa_dsese 1M-4M (br9)	11877122048		1533116416		12.9%				35%		17400		3m15s
+profile_big 8 4K           1M-4M (br9)	11877122048		1996963840		16.8%				46%		17400
+profile_big 8 4K soa       1M-4M (br9)	11877122048		1640112128		13.8%				38%		17400
+profile_big 8 4K soa_dssee 1M-4M (br9)	11877122048		1682989056		14.2%				39%		17400
+profile_big 8 4K soa_dsdsd 1M-4M (br9)	11877122048		1564803072		13.1%				36%		17400
+profile_big 8 4K soa_dssdd 1M-4M (br9)	11877122048		1288146944		10.8%				30%		17400
+profile_big 8 4K soa_dssdd 1M-4M (br)	11877122048		1135857664		9.6%				26%		17400
+
+--- bugfixes ---
+
+profile_big 8 4K soa_dssdd 1M-8M (br)   5978460160      692908032       11.6%               16%     124819      ~35m
+
+
+File sizes:
+            Uncompressed
+                        Compressed (br)
+      8      0.000%      0.000%
+     16      0.000%      0.000%
+     32      0.000%      0.000%
+     64      0.000%      0.000%
+    128      0.000%     15.559%
+    256      6.834%     18.482%
+    512      9.625%     18.076%
+   1024     12.639%     16.427%
+   2048     13.093%      8.162%
+   4096     12.545%     11.546%
+   8192     12.488%      6.026%
+  16384      6.958%      2.577%
+  32768      6.364%      0.970%
+  65536      7.327%      0.545%
+ 131072      6.094%      0.663%
+ 262144      3.517%      0.725%
+ 524288      0.590%      0.208%
+1048576      0.790%      0.034%
+2097152      0.981%      0.000%
+4194304      0.140%      0.000%
+8388608      0.016%      0.000%
+
+Total size    5978M        693M

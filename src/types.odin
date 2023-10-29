@@ -94,6 +94,7 @@ SpallError :: enum int {
 	InvalidFile = 3,
 	InvalidFileVersion = 4,
 	NativeFileDetected = 5,
+	InvalidTilemapVersion = 6,
 }
 
 Camera :: struct {
@@ -208,6 +209,67 @@ Event :: struct #packed {
 	timestamp: i64,
 	duration: i64,
 	self_time: i64,
+	color: FVec3,
+	weight: i64,
+	count: i64,
+	is_terminal: bool,
+}
+TraceFormat :: enum {
+	Json,
+	ManualStreamV1,
+	TilemapV1,
+}
+
+VisibleThread :: struct {
+	pid: u32,
+	tid: u32,
+	min_depth: u32,
+	max_depth: u32,
+}
+VisibleRange :: struct {
+	threads: [dynamic]VisibleThread,
+	min_time: i64,
+	max_time: i64,
+	time_granularity: i64,
+}
+TileStatus :: enum {
+	None,
+	Fetching,
+	WaitingForParent,
+	CoveredByParent,
+	Loaded,
+	NotFound,
+}
+TILE_HEIGHT :: 16
+INITIAL_NODES_PER_TILE :: 4096
+ZOOM_LOG_LOG_BASE :: 3
+ZOOM_LOG_BASE :: (1 << ZOOM_LOG_LOG_BASE)
+Tile :: struct {
+	status: TileStatus,
+	pid: u32,
+	tid: u32,
+	depth_coord: u32,
+	zoom: u32,
+	time_coord: u32,
+	zoom_levels_covered: u8,
+	maybe_data: ^[]u8,
+}
+TiledZoomedRow :: struct {
+	tiles: [dynamic]Tile // Sorted by time, missing tiles are skipped
+}
+TiledRow :: struct {
+	zoomed_rows: [dynamic]TiledZoomedRow,
+}
+TiledThread :: struct {
+	tid: u32,
+	rows: [dynamic]TiledRow,
+}
+TiledProcess :: struct {
+	pid: u32,
+	threads: [dynamic]TiledThread,
+}
+Tilemap :: struct {
+	processes: [dynamic]TiledProcess,
 }
 
 COLOR_CHOICES :: 16
@@ -236,6 +298,9 @@ Trace :: struct {
 
 	zoom_event: EventID,
 
+	is_tiled: bool,
+	tilemap: Tilemap,
+
 	file_name: string,
 	file_name_store: [1024]u8,
 
@@ -254,7 +319,7 @@ ChunkNode :: struct #packed {
 }
 
 Depth :: struct {
-	tree: []ChunkNode,
+	tree: [dynamic]ChunkNode,
 	events: [dynamic]Event,
 	leaf_count:   int,
 	overhang_len: int,
