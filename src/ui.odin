@@ -317,13 +317,13 @@ draw_header :: proc(trace: ^Trace, ui_state: ^UIState) {
 		cursor_x += button_width + button_pad
 
 		// Process All Events
-		if button(Rect{cursor_x, (header_rect.h / 2) - (button_height / 2), button_width, button_height}, "\uf1fe", "get stats for the whole file", .IconFont, 0, ui_state.width) {
-			trace.stats_start_time = 0
-			trace.stats_end_time = f64(trace.total_max_time - trace.total_min_time)
-			ui_state.multiselecting = true
-			build_selected_ranges(trace, ui_state)
-		}
-		cursor_x += button_width + button_pad
+		// if button(Rect{cursor_x, (header_rect.h / 2) - (button_height / 2), button_width, button_height}, "\uf1fe", "get stats for the whole file", .IconFont, 0, ui_state.width) {
+		// 	trace.stats_start_time = 0
+		// 	trace.stats_end_time = f64(trace.total_max_time - trace.total_min_time)
+		// 	ui_state.multiselecting = true
+		// 	build_selected_ranges(trace, ui_state)
+		// }
+		// cursor_x += button_width + button_pad
 
 		file_name_width := measure_text(trace.file_name, .H1Size, .DefaultFont)
 		name_x := max((full_flamegraph_rect.w / 2) - (file_name_width / 2), cursor_x)
@@ -485,7 +485,7 @@ draw_rect_tooltip :: proc(trace: ^Trace, ui_state: ^UIState) {
 	}
 }
 
-draw_flamegraphs :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UIState) {
+draw_flamegraphs :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UIState) -> VisibleRange {
 	full_flamegraph_rect := ui_state.full_flamegraph_rect
 	inner_flamegraph_rect := ui_state.inner_flamegraph_rect
 	padded_flamegraph_rect := ui_state.padded_flamegraph_rect
@@ -493,6 +493,14 @@ draw_flamegraphs :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UI
 	flamegraph_header_height := ui_state.flamegraph_header_height
 	flamegraph_toptext_height := ui_state.flamegraph_toptext_height
 	info_pane_rect := ui_state.info_pane_rect
+
+	min_visible_time := (                     (0 - cam.pan.x) / cam.current_scale)
+	max_visible_time := ((full_flamegraph_rect.w - cam.pan.x) / cam.current_scale)
+	visible_range := VisibleRange{
+		min_time = i64(min_visible_time),
+		max_time = i64(max_visible_time),
+		time_granularity = i64(min_ch_width / cam.current_scale), // TODO: check this is correct
+	}
 
 	// graph-relative timebar and subdivisions
 	division_ns, draw_tick_start_ns, display_range_start_ns: f64
@@ -509,8 +517,8 @@ draw_flamegraphs :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UI
 		else if rem < 0.6 { division_ns -= (division_ns / 2)   } // multiples of 5
 
 		// find the current range in ns
-		display_range_start_ns =  (                     (0 - cam.pan.x) / cam.current_scale) * trace.stamp_scale
-		display_range_end_ns   := ((full_flamegraph_rect.w - cam.pan.x) / cam.current_scale) * trace.stamp_scale
+		display_range_start_ns = min_visible_time * trace.stamp_scale
+		display_range_end_ns := max_visible_time * trace.stamp_scale
 
 		// round down to make sure we get the first line on screen
 		draw_tick_start_ns = f_round_down(display_range_start_ns, division_ns)
@@ -558,7 +566,6 @@ draw_flamegraphs :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UI
 			h2_size := h2_height + (h2_height / 2)
 			cur_y += h2_size
 
-			thread_gap := 8.0
 			thread_advance := ((f64(len(thread.depths)) * ui_state.rect_height) + thread_gap)
 
 			if cur_y > info_pane_rect.y {
@@ -573,6 +580,13 @@ draw_flamegraphs :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UI
 				draw_text(get_thread_name(trace, &thread), Vec2{ui_state.side_pad + 5, last_cur_y}, .H2Size, .DefaultFont, text_color)
 			}
 
+			visible_thread := VisibleThread{
+				pid = proc_v.id,
+				tid = thread.id,
+				min_depth = max(u32),
+				max_depth = min(u32),
+			}
+
 			cur_depth_off := 0
 			for depth, d_idx in &thread.depths {
 				tree := depth.tree
@@ -585,11 +599,20 @@ draw_flamegraphs :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UI
 					}
 				}
 
+				y := cur_y + ui_state.rect_height * f64(d_idx)
+				h := ui_state.rect_height
+				if range_in_range(y, y + h, inner_flamegraph_rect.y, inner_flamegraph_rect.y + inner_flamegraph_rect.h) {
+					visible_thread.min_depth = min(visible_thread.min_depth, u32(d_idx))
+					visible_thread.max_depth = max(visible_thread.max_depth, u32(d_idx))
+				}
+
 				// If we blow this, we're in space
 				tree_stack := [128]int{}
 				stack_len := 0
 
-				tree_stack[0] = 0; stack_len += 1
+				if len(tree) > 0 {
+					tree_stack[0] = 0; stack_len += 1
+				}
 				for stack_len > 0 {
 					stack_len -= 1
 
@@ -604,14 +627,9 @@ draw_flamegraphs :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UI
 					range_width := time_range * cam.current_scale
 
 					// draw summary faketangle
-					min_width := 2.0
-					if (range_width / math.sqrt_f64(CHUNK_NARY_WIDTH)) < min_width {
-
-						y := ui_state.rect_height * f64(d_idx)
-						h := ui_state.rect_height
-
+					if (range_width / math.sqrt_f64(CHUNK_NARY_WIDTH)) < min_ch_width {
 						x := f64(cur_node.start_time)
-						w := min_width * math.sqrt_f64(CHUNK_NARY_WIDTH)
+						w := min_ch_width * math.sqrt_f64(CHUNK_NARY_WIDTH)
 						xm := x * cam.target_scale
 
 						r_x   := x * cam.current_scale
@@ -622,8 +640,7 @@ draw_flamegraphs :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UI
 
 						r_x    = max(r_x, 0)
 
-						r_y := cur_y + y
-						dr  := Rect{r_x, r_y, end_x - r_x, h}
+						dr  := Rect{r_x, y, end_x - r_x, h}
 
 						rect_color := cur_node.avg_color
 						grey := greyscale(cur_node.avg_color)
@@ -653,8 +670,6 @@ draw_flamegraphs :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UI
 					if child_count <= 0 {
 						event_start_idx, event_end_idx := get_event_range(&depth, tree_idx)
 						scan_arr := depth.events[event_start_idx:event_end_idx]
-						y := ui_state.rect_height * f64(d_idx)
-						h := ui_state.rect_height
 						for ev, de_id in &scan_arr {
 							x := f64(ev.timestamp - trace.total_min_time)
 							duration := f64(bound_duration(&ev, thread.max_time))
@@ -673,19 +688,17 @@ draw_flamegraphs :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UI
 
 							r_x    = max(r_x, 0)
 
-							r_y := cur_y + y
-							dr := Rect{r_x, r_y, end_x - r_x, h}
+							dr := Rect{r_x, y, end_x - r_x, h}
 
 							if !rect_in_rect(dr, inner_flamegraph_rect) {
 								continue
 							}
 
 							ev_name := in_getstr(&trace.string_block, ev.name)
-							idx := name_color_idx(ev.name)
 							e_idx := event_start_idx + de_id
 
-							rect_color := trace.color_choices[idx]
-							grey := greyscale(trace.color_choices[idx])
+							rect_color := ev.color
+							grey := greyscale(ev.color)
 							if ui_state.multiselecting {
 								if found_rid != -1 {
 									range := trace.selected_ranges[found_rid]   
@@ -707,6 +720,10 @@ draw_flamegraphs :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UI
 							append(&gl_rects,
 								DrawRect{f32(dr.x), f32(dr.w), BVec4{u8(rect_color.x), u8(rect_color.y), u8(rect_color.z), 255}})
 							rect_count += 1
+
+							if !ev.is_terminal {
+								continue
+							}
 
 							underhang := full_flamegraph_rect.x - dr.x
 							overhang := (full_flamegraph_rect.x + full_flamegraph_rect.w) - dr.x
@@ -762,6 +779,8 @@ draw_flamegraphs :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UI
 				gl_push_rects(gl_rects[:], (cur_y + (ui_state.rect_height * f64(d_idx))), ui_state.rect_height)
 				resize(&gl_rects, 0)
 			}
+
+			append(&visible_range.threads, visible_thread)
 			cur_y += thread_advance
 		}
 	}
@@ -812,9 +831,11 @@ draw_flamegraphs :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UI
 			draw_line(Vec2{ui_state.side_pad, full_flamegraph_rect.y}, Vec2{ui_state.side_pad, full_flamegraph_rect.y + flamegraph_toptext_height}, 5, toolbar_color)
 		}
 	}
+
+	return visible_range
 }
 
-draw_global_activity :: proc(trace: ^Trace, highlight_start_x, highlight_end_x: f64, ui_state: ^UIState) {
+draw_global_activity :: proc(trace: ^Trace, highlight_start_x, highlight_end_x: f64, ui_state: ^UIState) -> VisibleRange {
 	global_activity_rect := ui_state.global_activity_rect
 	full_flamegraph_rect := ui_state.full_flamegraph_rect
 	minimap_rect := ui_state.minimap_rect
@@ -824,6 +845,12 @@ draw_global_activity :: proc(trace: ^Trace, highlight_start_x, highlight_end_x: 
 	layer_count := 1
 	for proc_v, _ in trace.processes {
 		layer_count += len(proc_v.threads)
+	}
+
+	visible_range := VisibleRange{
+		min_time = trace.total_min_time,
+		max_time = trace.total_max_time,
+		time_granularity = i64(min_ch_width / wide_scale_x),
 	}
 
 	append(&gl_rects, DrawRect{f32(global_activity_rect.x), f32(global_activity_rect.w), BVec4{u8(wide_bg_color.x), u8(wide_bg_color.y), u8(wide_bg_color.z), u8(wide_bg_color.w)}})
@@ -840,12 +867,22 @@ draw_global_activity :: proc(trace: ^Trace, highlight_start_x, highlight_end_x: 
 			depth := &thread.depths[0]
 			tree := depth.tree
 
+			visible_thread := VisibleThread{
+				pid = proc_v.id,
+				tid = thread.id,
+				min_depth = 0,
+				max_depth = 0,
+			}
+			append(&visible_range.threads, visible_thread)
+
 			// If we blow this, we're in space
 			tree_stack := [128]int{}
 			stack_len := 0
 
 			alpha := u8(255.0 / f64(layer_count))
-			tree_stack[0] = 0; stack_len += 1
+			if len(tree) > 0 {
+				tree_stack[0] = 0; stack_len += 1
+			}
 			for stack_len > 0 {
 				stack_len -= 1
 
@@ -855,10 +892,9 @@ draw_global_activity :: proc(trace: ^Trace, highlight_start_x, highlight_end_x: 
 				range_width := time_range * wide_scale_x
 
 				// draw summary faketangle
-				min_width := 2.0 
-				if (range_width / math.sqrt_f64(CHUNK_NARY_WIDTH)) < min_width {
+				if (range_width / math.sqrt_f64(CHUNK_NARY_WIDTH)) < min_ch_width {
 					x := f64(cur_node.start_time)
-					w := min_width * math.sqrt_f64(CHUNK_NARY_WIDTH)
+					w := min_ch_width * math.sqrt_f64(CHUNK_NARY_WIDTH)
 					xm := x * wide_scale_x
 
 					r_x   := x * wide_scale_x
@@ -924,9 +960,11 @@ draw_global_activity :: proc(trace: ^Trace, highlight_start_x, highlight_end_x: 
 
 	draw_rect(Rect{0, global_activity_rect.y, ui_state.side_pad, global_activity_rect.h}, BVec4{0, 0, 0, 255})
 	draw_rect(Rect{ui_state.width - minimap_rect.w, global_activity_rect.y, minimap_rect.w, global_activity_rect.h}, BVec4{0, 0, 0, 255})
+
+	return visible_range
 }
 
-draw_minimap :: proc(trace: ^Trace, ui_state: ^UIState) {
+draw_minimap :: proc(trace: ^Trace, ui_state: ^UIState) -> VisibleRange {
 	minimap_rect              := ui_state.minimap_rect
 	full_flamegraph_rect      := ui_state.full_flamegraph_rect
 	info_pane_rect            := ui_state.info_pane_rect
@@ -944,10 +982,15 @@ draw_minimap :: proc(trace: ^Trace, ui_state: ^UIState) {
 	x_scale := rescale(1.0, 0, f64(trace_duration), 0, minimap_rect.w - (2 * minimap_pad))
 	y_scale := mini_rect_height / ui_state.rect_height
 
+	visible_range := VisibleRange{
+		min_time = trace.total_min_time,
+		max_time = trace.total_max_time,
+		time_granularity = i64(min_ch_width / x_scale),
+	}
+
 	tree_y : f64 = padded_flamegraph_rect.y - (cam.pan.y * y_scale)
 	proc_loop: for proc_v, p_idx in &trace.processes {
 		thread_loop: for thread, t_idx in &proc_v.threads {
-
 			mini_thread_gap := 8.0
 			thread_advance := ((f64(len(thread.depths)) * mini_rect_height) + mini_thread_gap)
 			if tree_y > info_pane_rect.y {
@@ -956,6 +999,13 @@ draw_minimap :: proc(trace: ^Trace, ui_state: ^UIState) {
 			if tree_y + thread_advance < 0 {
 				tree_y += thread_advance
 				continue
+			}
+
+			visible_thread := VisibleThread{
+				pid = proc_v.id,
+				tid = thread.id,
+				min_depth = max(u32),
+				max_depth = min(u32),
 			}
 
 			for depth, d_idx in &thread.depths {
@@ -968,13 +1018,19 @@ draw_minimap :: proc(trace: ^Trace, ui_state: ^UIState) {
 				}
 
 				y := tree_y + (mini_rect_height * f64(d_idx))
+				if range_in_range(y, y + mini_rect_height, minimap_rect.y, minimap_rect.y + minimap_rect.h) {
+					visible_thread.min_depth = min(visible_thread.min_depth, u32(d_idx))
+					visible_thread.max_depth = max(visible_thread.max_depth, u32(d_idx))
+				}
 
 				// If we blow this, we're in space
 				tree_stack := [128]int{}
 				stack_len := 0
 
 				tree := &depth.tree
-				tree_stack[0] = 0; stack_len += 1
+				if len(tree) > 0 {
+					tree_stack[0] = 0; stack_len += 1
+				}
 				for stack_len > 0 {
 					stack_len -= 1
 
@@ -984,10 +1040,9 @@ draw_minimap :: proc(trace: ^Trace, ui_state: ^UIState) {
 					range_width := time_range * x_scale
 
 					// draw summary faketangle
-					min_width := 2.0 
-					if (range_width / math.sqrt_f64(CHUNK_NARY_WIDTH)) < min_width {
+					if (range_width / math.sqrt_f64(CHUNK_NARY_WIDTH)) < min_ch_width {
 						x := f64(cur_node.start_time)
-						w := min_width * math.sqrt_f64(CHUNK_NARY_WIDTH)
+						w := min_ch_width * math.sqrt_f64(CHUNK_NARY_WIDTH)
 						xm := x * x_scale
 
 						r_x   := x * x_scale
@@ -1042,11 +1097,10 @@ draw_minimap :: proc(trace: ^Trace, ui_state: ^UIState) {
 							r_x    = max(r_x, 0)
 							r_w   := end_x - r_x
 
-							idx := name_color_idx(ev.name)
 							e_idx := event_start_idx + de_id
 
-							rect_color := trace.color_choices[idx]
-							grey := greyscale(trace.color_choices[idx])
+							rect_color := ev.color
+							grey := greyscale(ev.color)
 							if ui_state.multiselecting {
 								if found_rid != -1 {
 									range := trace.selected_ranges[found_rid]   
@@ -1072,6 +1126,7 @@ draw_minimap :: proc(trace: ^Trace, ui_state: ^UIState) {
 				resize(&gl_rects, 0)
 			}
 
+			append(&visible_range.threads, visible_thread)
 			tree_y += thread_advance
 		}
 	}
@@ -1084,9 +1139,11 @@ draw_minimap :: proc(trace: ^Trace, ui_state: ^UIState) {
 
 	// top-right cover-chunk
 	draw_rect(Rect{minimap_rect.x, full_flamegraph_rect.y, minimap_rect.w + (minimap_pad * 2), flamegraph_toptext_height}, bg_color)
+
+	return visible_range
 }
 
-draw_topbars :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UIState) {
+draw_topbars :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UIState) -> VisibleRange {
 	header_rect               := ui_state.header_rect
 	global_activity_rect      := ui_state.global_activity_rect
 	global_timebar_rect       := ui_state.global_timebar_rect
@@ -1116,7 +1173,7 @@ draw_topbars :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UIStat
 		highlight_start_x = high_center - (min_highlight / 2)
 		highlight_end_x = high_center + (min_highlight / 2)
 	}
-	draw_global_activity(trace, highlight_start_x, highlight_end_x, ui_state)
+	visible_range := draw_global_activity(trace, highlight_start_x, highlight_end_x, ui_state)
 
 	// global timebar
 	{
@@ -1178,6 +1235,8 @@ draw_topbars :: proc(trace: ^Trace, start_time, end_time: i64, ui_state: ^UIStat
 			Vec2{0, header_rect.h + global_timebar_rect.h + global_activity_rect.h}, 
 			Vec2{ui_state.width, header_rect.h + global_timebar_rect.h + global_activity_rect.h}, 1, line_color)
 	}
+
+	return visible_range
 }
 
 INITIAL_ITER :: 500_000

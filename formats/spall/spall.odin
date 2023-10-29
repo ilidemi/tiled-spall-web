@@ -2,6 +2,7 @@ package spall
 
 MANUAL_MAGIC :: u64(0x0BADF00D)
 NATIVE_MAGIC :: u64(0xABADF00D)
+TILEMAP_MAGIC :: u64(0xAFADF00D)
 
 Header :: struct #packed {
 	magic:          u64,

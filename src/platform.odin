@@ -172,6 +172,8 @@ foreign js {
 
 	get_chunk :: proc(offset, size: f64) ---
 	open_file_dialog :: proc() ---
+
+	fetch_tile :: proc(base_url: string, pid, tid, depth, zoom, time: u32) ---
 }
 
 // a bunch of silly platform wrappers, so I can jam in dpr scaling

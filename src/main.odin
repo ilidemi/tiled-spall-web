@@ -85,6 +85,7 @@ h1_height     :f64 = 0
 h2_height     :f64 = 0
 
 ch_width      :f64 = 0
+min_ch_width  :f64 = 2
 thread_gap    :f64 = 8
 
 build_hash : i32 = 0
@@ -131,7 +132,6 @@ set_flamegraph_camera :: proc(trace: ^Trace, ui_state: ^UIState, start_ticks, du
 
 reset_flamegraph_camera :: proc(trace: ^Trace, ui_state: ^UIState) {
 	cam = Camera{Vec2{0, 0}, Vec2{0, 0}, 0, 1, 1}
-	if trace.event_count == 0 { trace.total_min_time = 0; trace.total_max_time = 10000; trace.stamp_scale = 1; }
 
 	start_time: f64 = 0
 	end_time  := f64(trace.total_max_time - trace.total_min_time)
@@ -149,7 +149,7 @@ reset_flamegraph_camera :: proc(trace: ^Trace, ui_state: ^UIState) {
 main :: proc() {
 	ONE_GB_PAGES :: 1 * 1024 * 1024 * 1024 / js.PAGE_SIZE
 	ONE_MB_PAGES :: 1 * 1024 * 1024 / js.PAGE_SIZE
-	temp_data, _         := js.page_alloc(ONE_MB_PAGES * 15)
+	temp_data, _         := js.page_alloc(ONE_MB_PAGES * 75)
 	debug_data, _        := js.page_alloc(1)
 	scratch_data, _      := js.page_alloc(ONE_MB_PAGES * 20)
 	scratch2_data, _     := js.page_alloc(ONE_MB_PAGES * 50)
@@ -192,7 +192,7 @@ main :: proc() {
 	_trace = Trace{}
 	ui_state = UIState{}
 	next_line(&ui_state.line_height, em)
-	ui_state.info_pane_height = ui_state.line_height * 8
+	// ui_state.info_pane_height = ui_state.line_height * 8
 }
 
 @export
@@ -358,24 +358,26 @@ frame :: proc "contextless" (width, height: f64, _dt: f64, current_time: f64) ->
 	gl_init_frame(bg_color2)
 	gl_rects = make([dynamic]DrawRect, 0, int(width / 2), temp_allocator)
 
-	draw_flamegraphs(&_trace, start_time, end_time, &ui_state)
+	graph_visible_range := draw_flamegraphs(&_trace, start_time, end_time, &ui_state)
 
-	draw_minimap(&_trace, &ui_state)
-	draw_topbars(&_trace, start_time, end_time, &ui_state)
+	minimap_visible_range := draw_minimap(&_trace, &ui_state)
+	global_activity_visible_range := draw_topbars(&_trace, start_time, end_time, &ui_state)
+
+	tilemap_fetch_missing(&_trace, graph_visible_range, minimap_visible_range, global_activity_visible_range)
 
 	// draw sidelines
 	draw_line(Vec2{ui_state.side_pad, header_height + timebar_height},       Vec2{ui_state.side_pad, ui_state.info_pane_rect.y}, 1, line_color)
 	draw_line(Vec2{ui_state.minimap_rect.x, header_height + timebar_height}, Vec2{ui_state.minimap_rect.x, ui_state.info_pane_rect.y}, 1, line_color)
 
-	process_multiselect(&_trace, pan_delta, dt, &ui_state)
-	process_stats(&_trace, &ui_state)
+	// process_multiselect(&_trace, pan_delta, dt, &ui_state)
+	// process_stats(&_trace, &ui_state)
 
-	draw_stats(&_trace, &ui_state)
-	stats_just_started = false
-	if resort_stats {
-		sort_stats(&_trace)
-		resort_stats = false
-	}
+	// draw_stats(&_trace, &ui_state)
+	// stats_just_started = false
+	// if resort_stats {
+	// 	sort_stats(&_trace)
+	// 	resort_stats = false
+	// }
 
 	draw_header(&_trace, &ui_state)
 

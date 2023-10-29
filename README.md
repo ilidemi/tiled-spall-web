@@ -1,3 +1,11 @@
+# tiled-spall
+
+Spall-web, augmented with an ability to page in pieces of a trace as tiles and a tool to generate those tiles (`tools/tile`). >4GB traces can now be viewed in the browser and shared as static websites.
+
+The tiling code is calibrated for the balance between the total size of tiles (disk space) and the size of an individual tile (loading speed). Tile data is delta-encoded in relation to previous zoom levels and rearranged in a way that compresses best with Brotli.
+
+A 4.2GB trace of GraphViz dot layout is live at https://ilidemi.com/projects/tiled-spall/
+
 # spall
 
 spall is a profiler library and a web-frontend for exploring your code and digging into potential performance problems.
